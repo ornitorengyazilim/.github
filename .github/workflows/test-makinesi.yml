@@ -1,0 +1,58 @@
+# TEST MAKİNESİ SEÇİMİ — ornitorengyazilim'in bütün gizli projeleri için ortak (14 Kas 2026, kurucu kararı: "testler GitHub üzerinden ofis
+# laptopunda koşsun; laptopta sorun varsa GitHub'ın kendi makinesinde").
+#
+# Ofis laptopu organizasyonun test makinesidir (etiket: ofis-laptop). Bu iş laptop çevrimiçiyse onu, değilse ubuntu-latest'i seçer.
+# Anahtar (TEST_MAKINESI_DURUM: yalnız "Self-hosted runners: Read-only", depoya erişimi yok) yoksa, API yanıt vermezse ya da laptop
+# kapalıysa → GitHub. Herkese açık projeler laptopu KULLANMAZ (organizasyon ayarı; çağırsalar da GitHub seçilir).
+#
+# Kullanım (çağıran projede):
+#   jobs:
+#     makine:
+#       uses: ornitorengyazilim/.github/.github/workflows/test-makinesi.yml@main
+#       secrets: inherit
+#     test:
+#       needs: makine
+#       runs-on: ${{ fromJSON(needs.makine.outputs.runs_on) }}
+on:
+  workflow_call:
+    secrets:
+      TEST_MAKINESI_DURUM:
+        required: false
+    outputs:
+      runs_on:
+        description: 'JSON: ["self-hosted","ofis-laptop"] ya da "ubuntu-latest"'
+        value: ${{ jobs.sec.outputs.runs_on }}
+      laptop:
+        description: "true | false"
+        value: ${{ jobs.sec.outputs.laptop }}
+
+permissions:
+  contents: read
+
+jobs:
+  sec:
+    name: test makinesi
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      runs_on: ${{ steps.bak.outputs.runs_on }}
+      laptop: ${{ steps.bak.outputs.laptop }}
+    steps:
+      - id: bak
+        env:
+          DURUM_ANAHTARI: ${{ secrets.TEST_MAKINESI_DURUM }}
+          GIZLI: ${{ github.event.repository.private }}
+        run: |
+          laptop=false
+          if [ -n "$DURUM_ANAHTARI" ] && [ "$GIZLI" = "true" ]; then
+            n=$(curl -fsS --max-time 15 -H "Authorization: Bearer $DURUM_ANAHTARI" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/actions/runners?per_page=100" \
+              | jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "ofis-laptop"))] | length' 2>/dev/null || echo 0)
+            if [ "${n:-0}" -gt 0 ] 2>/dev/null; then laptop=true; fi
+          fi
+          if [ "$laptop" = true ]; then
+            echo 'runs_on=["self-hosted","ofis-laptop"]' >> "$GITHUB_OUTPUT"; echo "test makinesi: ofis laptopu"
+          else
+            echo 'runs_on="ubuntu-latest"' >> "$GITHUB_OUTPUT"; echo "test makinesi: GitHub"
+          fi
+          echo "laptop=$laptop" >> "$GITHUB_OUTPUT"
