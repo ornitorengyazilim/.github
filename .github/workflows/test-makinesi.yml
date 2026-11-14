@@ -1,15 +1,16 @@
 # TEST MAKİNESİ SEÇİMİ — ornitorengyazilim'in bütün gizli projeleri için ortak (14 Kas 2026, kurucu kararı: "testler GitHub üzerinden ofis
-# laptopunda koşsun; laptopta sorun varsa GitHub'ın kendi makinesinde").
+# laptopunda koşsun; laptopta sorun varsa GitHub'ın kendi makinesinde"; "her şey otomatik olsun").
 #
-# Ofis laptopu organizasyonun test makinesidir (etiket: ofis-laptop). Bu iş laptop çevrimiçiyse onu, değilse ubuntu-latest'i seçer.
-# Anahtar (TEST_MAKINESI_DURUM: yalnız "Self-hosted runners: Read-only", depoya erişimi yok) yoksa, API yanıt vermezse ya da laptop
-# kapalıysa → GitHub. Herkese açık projeler laptopu KULLANMAZ (organizasyon ayarı; çağırsalar da GitHub seçilir).
+# Ofis laptopu organizasyonun test makinesidir (etiket: ofis-laptop, iki yuva). Bu iş laptop açıksa onu, değilse ubuntu-latest'i seçer.
+# Anahtar GEREKMEZ: laptop dakikada bir bu deponun kalp-atisi dalına {zaman, yuva} yazar (laptopta /usr/local/bin/kalp-atisi, systemd
+# zamanlayıcısı; yalnız runner yuvası çalışıyorsa). Kayıt 5 dk'dan eskiyse ya da okunamazsa → GitHub. Yeni projeye hiçbir şey eklenmez.
+# Herkese açık projeler laptopu KULLANMAZ (organizasyon ayarı; çağırsalar da GitHub seçilir).
+# TEST_MAKINESI_DURUM girdisi eski çağıranlar kırılmasın diye duruyor; kullanılmıyor.
 #
-# Kullanım (çağıran projede):
+# Kullanım (çağıran projede; `secrets: inherit` YAZMA — çağıranın bütün sırlarını buraya verir):
 #   jobs:
 #     makine:
 #       uses: ornitorengyazilim/.github/.github/workflows/test-makinesi.yml@main
-#       secrets: inherit
 #     test:
 #       needs: makine
 #       runs-on: ${{ fromJSON(needs.makine.outputs.runs_on) }}
@@ -40,15 +41,21 @@ jobs:
     steps:
       - id: bak
         env:
-          DURUM_ANAHTARI: ${{ secrets.TEST_MAKINESI_DURUM }}
+          GH_TOKEN: ${{ github.token }}
           GIZLI: ${{ github.event.repository.private }}
         run: |
           laptop=false
-          if [ -n "$DURUM_ANAHTARI" ] && [ "$GIZLI" = "true" ]; then
-            n=$(curl -fsS --max-time 15 -H "Authorization: Bearer $DURUM_ANAHTARI" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/actions/runners?per_page=100" \
-              | jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "ofis-laptop"))] | length' 2>/dev/null || echo 0)
-            if [ "${n:-0}" -gt 0 ] 2>/dev/null; then laptop=true; fi
+          if [ "$GIZLI" = "true" ]; then
+            z=$(curl -fsS --max-time 15 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY_OWNER}/.github/contents/durum.json?ref=kalp-atisi" 2>/dev/null \
+              | jq -r '.zaman // empty' 2>/dev/null || true)
+            if [ -n "$z" ]; then
+              t=$(date -u -d "$z" +%s 2>/dev/null || echo 0); yas=$(( $(date -u +%s) - t ))
+              if [ "$t" -gt 0 ] && [ "$yas" -ge -60 ] && [ "$yas" -lt 300 ]; then laptop=true; fi
+              echo "laptop son kalp atışı: $z ($yas sn önce)"
+            else
+              echo "laptop kalp atışı okunamadı"
+            fi
           fi
           if [ "$laptop" = true ]; then
             echo 'runs_on=["self-hosted","ofis-laptop"]' >> "$GITHUB_OUTPUT"; echo "test makinesi: ofis laptopu"
